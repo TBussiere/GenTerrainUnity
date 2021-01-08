@@ -63,6 +63,8 @@ namespace Assets.Class
             field[ind] = v;
         }
 
+        //public (int ,int) 
+
         protected List<SP2> getFieldCopy()
         {
             List<SP2> res = new List<SP2>();

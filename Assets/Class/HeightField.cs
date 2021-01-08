@@ -20,7 +20,8 @@ namespace Assets.Class
             STREAM_POWER,
             WETNESS_INDEX,
             ACCESS,
-            ORRIANTATION
+            ORRIANTATION,
+            ROUTE
         }
 
         public Filter currentFilter = Filter.NONE;
@@ -35,10 +36,17 @@ namespace Assets.Class
 
         bool StreamAreaUptoDate = false;
         SF2 StreamArea = null;
+        bool SlopeMapUptoDate = false;
+        SF2 SlopeMap = null;
+
+        SF2 Road = null;
+
+
 
         int[,] kerint;//unuse
         float[,] kernel;
         int kernSize;
+        bool needCalculateRoad = false;
 
         //img box2d double double
         public HeightField(Texture2D img, Box2D b, float bdeepth, float wdeepth) : base(b, img.width, img.height)
@@ -48,6 +56,14 @@ namespace Assets.Class
             this.wdeepth = wdeepth;
 
             notifyChanges();
+
+
+            CalculateKernel(3);
+            Smooth();
+            CalculateKernel(5);
+            Smooth();
+
+            needCalculateRoad = true;
         }
 
         public void notifyChanges()
@@ -68,6 +84,7 @@ namespace Assets.Class
             }
             MinMaxLapla();
             StreamAreaUptoDate = false;
+            SlopeMapUptoDate = false;
         }
 
         private Color32[] getVertexesColor()
@@ -113,7 +130,7 @@ namespace Assets.Class
                         StreamArea = DrainageMonoDirr();
                     }
                     float slopeij = slope(i, j);
-                    float res6 = Mathf.Pow(StreamArea.at(i, j),0.5f) * slopeij;
+                    float res6 = Mathf.Pow(StreamArea.at(i, j), 0.5f) * slopeij;
                     //float res6 = StreamArea.at(i, j);
                     res6 = Mathf.InverseLerp(1, 10, res6);
                     float resok = Mathf.Clamp01(res6);
@@ -134,7 +151,23 @@ namespace Assets.Class
                     break;
                 case Filter.ORRIANTATION:
                     Vector3 norm = Normal(i, j);
-                    return new Color(norm.x,norm.y, norm.z);
+                    return new Color(norm.x, norm.y, norm.z);
+                case Filter.ROUTE:
+                    if (needCalculateRoad)
+                    {
+                        SlopeMap = getSlopeMap();
+                        Road = CalculateRoad();
+                        needCalculateRoad = false;
+                        Debug.Log("max :" + Road.max);
+                    }
+                    if (Road.at(i,j)>0)
+                    {
+                        return Shade(Mathf.InverseLerp(Road.min,Road.max,Road.at(i,j)));
+                    }
+                    else
+                    {
+                        return new Color(0.5f, 0.5f, 0.5f, 1f);
+                    }
                 default:
                     return new Color(0.5f, 0.5f, 0.5f, 1f);
             }
@@ -381,5 +414,125 @@ namespace Assets.Class
             internal int nb = 0;
         }
 
-    }
-}
+        public SF2 getSlopeMap()
+        {
+            SF2 res = new SF2(this, 0);
+
+            for (int i = 0; i < nx; i++)
+            {
+                for (int j = 0; j < ny; j++)
+                {
+                    float slopeij = slope(i, j);
+                    res.setAt(i, j, slopeij);
+                    if (res.min > slopeij) res.min = slopeij;
+                    if (res.max < slopeij) res.max = slopeij;
+                }
+            }
+
+            SlopeMapUptoDate = true;
+            return res;
+        }
+
+        public SF2 CalculateRoad()
+        {
+            if (!needCalculateRoad)
+            {
+                return this.Road;
+            }
+            needCalculateRoad = false;
+
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+
+            SF2 res = new SF2(this, 0);
+
+            Graph graph = new Graph(nx * ny);
+
+            for (int i = 0; i < nx; i++)
+            {
+                for (int j = 0; j < ny; j++)
+                {
+                    float slopeij = SlopeMap.at(i, j);
+                    for (int k = -1; k < 2; k++)
+                    {
+                        for (int l = -1; l < 2; l++)
+                        {
+                            int ind1 = index(i, j);
+                            int ind2 = index(i + k, j + l);
+
+                            if (k == 0 && l == 0) continue;
+                            if ((i + k) <= 0 || (i + k) >= nx - 1 || (j + l) <= 0 || (j + l) >= ny - 1)
+                            {
+                                continue;
+                            }
+                            //cost = 1.2^DeltaSlope * dist
+                            float deltaSlope = slopeij - SlopeMap.at(i + k, j + l);
+                            deltaSlope *= 8;
+                            float cost;
+
+                            float baseLength;
+                            if ((l + k) % 2 != 0)
+                                baseLength = 1f;
+                            else
+                                baseLength = Mathf.Sqrt(2);
+
+                            cost = baseLength * Mathf.Pow(10f, deltaSlope);
+
+                            bool isok = graph.AddEdge(ind1, ind2, cost);
+                        }
+                    }
+                }
+            }
+
+            int startP = index(1000,10);
+            int dest = index(10, 1000);
+            var path = graph.FindPath(startP);
+
+
+
+            //Debug.Log(path[dest].distance);
+
+            List<(int index,float linkcost)> resultPath = Path(startP, dest);
+
+
+            List<(int index, float linkcost)> Path(int start, int destination)
+            {
+
+                List<(int index, float linkcost)> pathlist = new List<(int index, float linkcost)>();
+                pathlist.Add( (destination, (float)(path[destination].distance - path[path[destination].prev].distance) ) );
+                for (int i = destination; i != start; i = path[i].prev)
+                {
+                    float linkcost = (float)(path[path[i].prev].distance - path[path[path[i].prev].prev].distance);
+                    pathlist.Add( (path[i].prev, linkcost) );
+                }
+                return pathlist;
+            }
+
+            res.max = resultPath[0].linkcost;
+            res.min = resultPath[0].linkcost;
+
+            for (int i = 0; i < resultPath.Count; i++)
+            {
+                int rx;
+                int ry;
+                var revind = reverseIndex(resultPath[i].index); 
+                rx = revind.x;
+                ry = revind.y;
+                res.setAt(rx,ry, resultPath[i].linkcost);
+
+                if (res.max < resultPath[i].linkcost) res.max = resultPath[i].linkcost;
+                if (res.min > resultPath[i].linkcost) res.min = resultPath[i].linkcost;
+            }
+
+            watch.Stop();
+            long elapsedMs = watch.ElapsedMilliseconds;
+            Debug.Log(elapsedMs);
+
+            return res;
+        }
+
+
+
+
+
+    }//class
+}//namespace

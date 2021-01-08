@@ -51,8 +51,6 @@ public class HandleBox : MonoBehaviour
         //meshView.createBaseTest();        
 
         StartCoroutine("updateHeigth");
-
-
     }
 
     //IEnumerator pour step by step

@@ -52,6 +52,14 @@ namespace Assets.Class
         {
             return x * nx + y ;
         }
+        
+        public (int x,int y) reverseIndex(int ind)
+        {
+            int y = ind % nx;
+            int x = (ind - y) / nx;
+
+            return (x, y);
+        }
 
 
         public Vector2 Vertex(int i,int j)
